@@ -35,6 +35,10 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
  */
 
 contract DebtRebaseToken is ERC20, Ownable, AccessControl {
+    uint256 private constant PRECISION_FACTOR = 1e18;
+    uint256 private penaltyRate = 2 * 1e15; // 0.2% penalty rate
+    uint256 private daysGracePeriod = 3 days; // 3 days grace period
+
     constructor() ERC20("NFTBANK", "DEBT") Ownable(msg.sender) {}
 
     struct loanData {
@@ -42,7 +46,6 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
         uint256 loanBalance;
         uint256 rate;
         uint256 typeInterest;
-        uint256 startTime;
         uint256 endTime;
         uint256 lastPaymentTime;
         uint256 term;
@@ -50,10 +53,13 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
         uint256 interval;
         uint256 amount;
         uint256 penaltyAmount;
+        uint256 interestAmount;
+        uint256 missedPayments;
         address borrower;
     }
 
     struct borrowerData {
+        address borrower;
         uint256[] loanIds;
         uint256 totalLoanAmount;
         uint256 totalPaidAmount;
@@ -62,6 +68,21 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
     }
     mapping(uint256 loanId => loanData) loanInfo;
     mapping(address borrower => borrowerData) borrowerInfo;
+
+    function setPenaltyRate(uint256 _newPenaltyRate) external onlyOwner {
+        penaltyRate = ((_newPenaltyRate * PRECISION_FACTOR) / 100);
+    }
+
+    function setdaysGracePeriod(
+        uint256 _newDaysGracePeriod
+    ) external onlyOwner {
+        daysGracePeriod = _newDaysGracePeriod;
+    }
+
+    function setBorrowerData(address borrower) external {
+        borrowerInfo[borrower].borrower = borrower;
+        borrowerInfo[borrower].score = 100;
+    }
 
     function setLoanData(
         uint256 loanId,
@@ -73,14 +94,16 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
         uint256 amount
     ) external {
         loanInfo[loanId].loanId = loanId;
-        loanInfo[loanId].rate = rate;
+        loanInfo[loanId].rate = (rate * PRECISION_FACTOR) / 100;
         loanInfo[loanId].typeInterest = typeInterest;
-        loanInfo[loanId].startTime = block.timestamp;
         loanInfo[loanId].endTime = block.timestamp + (term * interval);
         loanInfo[loanId].term = term;
         loanInfo[loanId].interval = interval;
         loanInfo[loanId].borrower = borrower;
         loanInfo[loanId].amount = amount;
+        loanInfo[loanId].leftTerms = term;
+        loanInfo[loanId].loanBalance = amount;
+        loanInfo[loanId].lastPaymentTime = block.timestamp;
     }
 
     function mint(uint256 loanId, uint256 amount, address borrower) external {
@@ -98,6 +121,40 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
         _burn(borrower, amount);
     }
 
+    function loanState(uint256 loanId) external {
+        checkLoanMisses(loanId);
+        checkLoanPenalty(loanId);
+    }
+
+    function checkLoanMisses(uint256 loanId) internal {
+        uint256 timeNoPayment = block.timestamp -
+            loanInfo[loanId].lastPaymentTime;
+        uint256 interval = loanInfo[loanId].interval;
+        if (timeNoPayment > (interval + daysGracePeriod)) {
+            if (
+                (timeNoPayment - (interval + daysGracePeriod)) >
+                ((interval + daysGracePeriod) * 2)
+            ) {
+                //It's over
+            }
+        }
+    }
+
+    function checkLoanPenalty(uint256 loanId) internal {
+        uint256 checkedBalance = balanceOfLoan(loanId);
+        uint256 uncheckedBalance = loanInfo[loanId].loanBalance;
+        if (checkedBalance > uncheckedBalance) {
+            uint256 penalty = (checkedBalance - uncheckedBalance);
+            loanInfo[loanId].penaltyAmount += penalty;
+            borrowerInfo[loanInfo[loanId].borrower]
+                .totalPenaltyAmount += penalty;
+            borrowerInfo[loanInfo[loanId].borrower].score -= penalty;
+            loanInfo[loanId].loanBalance = checkedBalance;
+            _mint(loanInfo[loanId].borrower, penalty);
+            // Emit an event for the penalty
+        }
+    }
+
     function amountPayEachInterval(
         uint256 loanId
     ) public view returns (uint256) {
@@ -109,34 +166,81 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
 
         if (typeInterest == 0) {
             // Simple interest
-            return loanAmount / leftTerms;
+            return totalLoanPlusInterest(loanId) / leftTerms;
         } else if (typeInterest == 1) {
             // Compound interest
-            uint256 data = 1 + (intervalRate / 100);
-            for (uint256 i = 0; i < leftTerms; i++) {
-                data += (data * (1 + (intervalRate / 100)));
+            uint256 data = PRECISION_FACTOR + intervalRate;
+            for (uint256 i = 0; i < leftTerms - 1; i++) {
+                data =
+                    (data * (PRECISION_FACTOR + intervalRate)) /
+                    PRECISION_FACTOR;
             }
-            uint256 denominador = loanAmount * intervalRate * data;
-            uint256 numerador = data - 1;
-            return (denominador / numerador);
+            uint256 denominador = (loanAmount * (intervalRate) * data) /
+                PRECISION_FACTOR;
+            uint256 numerador = data - PRECISION_FACTOR;
+            return denominador / numerador;
         }
     }
 
     function balanceOfLoan(uint256 loanId) public view returns (uint256) {
         uint256 timeNoPayment = block.timestamp -
             loanInfo[loanId].lastPaymentTime;
-        if ((timeNoPayment / 1 days) > (loanInfo[loanId].interval + 3 days)) {
-            // 3 days grace period
-            // 0.15% penalty per day
-            // 0.15% = 0.0015
-            uint256 ecu;
-            for (uint96 i = 0; i < timeNoPayment; i++) {
-                ecu = (10015 * timeNoPayment) / 10000;
+        uint256 interval = loanInfo[loanId].interval;
+        uint256 amount = loanInfo[loanId].loanBalance;
+
+        if (timeNoPayment > (interval + daysGracePeriod)) {
+            uint256 ecu = (PRECISION_FACTOR + penaltyRate);
+            for (
+                uint96 i = 0;
+                i <
+                ((timeNoPayment - (interval + daysGracePeriod)) / 1 days) - 1;
+                i++
+            ) {
+                ecu =
+                    (ecu * (PRECISION_FACTOR + penaltyRate)) /
+                    PRECISION_FACTOR;
             }
-            uint256 penaltyAmount = loanInfo[loanId].loanBalance * ecu;
-            return (penaltyAmount);
-        } else {
+            return (amount * ecu) / PRECISION_FACTOR;
+        }
+        {
             return (loanInfo[loanId].loanBalance);
+        }
+    }
+
+    function totalLoanPlusInterest(
+        uint256 loanId
+    ) public view returns (uint256) {
+        uint256 amount = loanInfo[loanId].amount;
+        uint256 rate = loanInfo[loanId].rate;
+        uint256 typeInterest = loanInfo[loanId].typeInterest;
+        uint256 term = loanInfo[loanId].term;
+        uint256 interval = loanInfo[loanId].interval;
+
+        if (typeInterest == 0) {
+            // Simple interest
+            if (interval == 15 days) {
+                return (amount * (rate / 24)) * term;
+            } else {
+                return (amount * (rate / 12)) * term;
+            }
+        } else if (typeInterest == 1) {
+            // Compound interest
+            if (interval == 15 days) {
+                uint256 result = amount * (PRECISION_FACTOR + (rate / 24));
+                for (uint256 i = 0; i < term - 1; i++) {
+                    result =
+                        (result * (amount * (PRECISION_FACTOR + (rate / 24)))) /
+                        PRECISION_FACTOR;
+                }
+                return result;
+            } else {
+                uint256 result = amount * (PRECISION_FACTOR + (rate / 12));
+                for (uint256 i = 0; i < term - 1; i++) {
+                    result =
+                        (result * (amount * (PRECISION_FACTOR + (rate / 12)))) /
+                        PRECISION_FACTOR;
+                }
+            }
         }
     }
 
