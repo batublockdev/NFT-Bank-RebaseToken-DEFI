@@ -104,12 +104,12 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
         loanInfo[loanId].leftTerms = term;
         loanInfo[loanId].loanBalance = amount;
         loanInfo[loanId].lastPaymentTime = block.timestamp;
+        borrowerInfo[borrower].loanIds.push(loanId);
     }
 
     function mint(uint256 loanId, uint256 amount, address borrower) external {
         loanInfo[loanId].loanBalance += amount;
         borrowerInfo[borrower].totalLoanAmount += amount;
-        borrowerInfo[borrower].loanIds.push(loanId);
         _mint(borrower, amount);
     }
 
@@ -119,14 +119,28 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
         loanInfo[loanId].lastPaymentTime = block.timestamp;
         borrowerInfo[borrower].totalPaidAmount += amount;
         _burn(borrower, amount);
+        if (
+            loanInfo[loanId].leftTerms == 0 || loanInfo[loanId].loanBalance == 0
+        ) {
+            delete loanInfo[loanId];
+        }
     }
 
     function loanState(uint256 loanId) external {
-        checkLoanMisses(loanId);
-        checkLoanPenalty(loanId);
+        if (checkLoanMisses(loanId)) {
+            CleanLoan(loanId);
+        } else {
+            checkLoanPenalty(loanId);
+        }
     }
 
-    function checkLoanMisses(uint256 loanId) internal {
+    function CleanLoan(uint256 loanId) internal {
+        uint256 amount = loanInfo[loanId].loanBalance;
+        _burn(loanInfo[loanId].borrower, amount);
+        delete loanInfo[loanId];
+    }
+
+    function checkLoanMisses(uint256 loanId) internal view returns (bool) {
         uint256 timeNoPayment = block.timestamp -
             loanInfo[loanId].lastPaymentTime;
         uint256 interval = loanInfo[loanId].interval;
@@ -135,7 +149,9 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
                 (timeNoPayment - (interval + daysGracePeriod)) >
                 ((interval + daysGracePeriod) * 2)
             ) {
-                //It's over
+                return true;
+            } else {
+                return false;
             }
         }
     }
@@ -155,6 +171,24 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
         }
     }
 
+    function amountPayTotal(uint256 loanId) public view returns (uint256) {
+        uint256 loanAmount = balanceOfLoan(loanId);
+        uint256 rate = loanInfo[loanId].rate;
+        uint256 typeInterest = loanInfo[loanId].typeInterest;
+        uint256 term = loanInfo[loanId].leftTerms;
+        uint256 interval = loanInfo[loanId].interval;
+
+        if (typeInterest == 0) {
+            // Simple interest
+            return
+                loanAmount +
+                interestLoanSimple(interval, rate, term, loanAmount);
+        } else if (typeInterest == 1) {
+            // Compound interest
+            return interestLoanCompound(interval, rate, term, loanAmount);
+        }
+    }
+
     function amountPayEachInterval(
         uint256 loanId
     ) public view returns (uint256) {
@@ -163,10 +197,14 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
         uint256 typeInterest = loanInfo[loanId].typeInterest;
         uint256 leftTerms = loanInfo[loanId].leftTerms;
         uint256 intervalRate = rate / leftTerms;
+        uint256 amount = loanInfo[loanId].amount;
+        uint256 interval = loanInfo[loanId].interval;
 
         if (typeInterest == 0) {
             // Simple interest
-            return totalLoanPlusInterest(loanId) / leftTerms;
+            return
+                interestLoanSimple(interval, rate, leftTerms, amount) /
+                leftTerms;
         } else if (typeInterest == 1) {
             // Compound interest
             uint256 data = PRECISION_FACTOR + intervalRate;
@@ -207,7 +245,7 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
         }
     }
 
-    function totalLoanPlusInterest(
+    function totalloanPlusInterest(
         uint256 loanId
     ) public view returns (uint256) {
         uint256 amount = loanInfo[loanId].amount;
@@ -218,28 +256,46 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
 
         if (typeInterest == 0) {
             // Simple interest
-            if (interval == 15 days) {
-                return (amount * (rate / 24)) * term;
-            } else {
-                return (amount * (rate / 12)) * term;
-            }
+            return amount + interestLoanSimple(interval, rate, term, amount);
         } else if (typeInterest == 1) {
             // Compound interest
-            if (interval == 15 days) {
-                uint256 result = amount * (PRECISION_FACTOR + (rate / 24));
-                for (uint256 i = 0; i < term - 1; i++) {
-                    result =
-                        (result * (amount * (PRECISION_FACTOR + (rate / 24)))) /
-                        PRECISION_FACTOR;
-                }
-                return result;
-            } else {
-                uint256 result = amount * (PRECISION_FACTOR + (rate / 12));
-                for (uint256 i = 0; i < term - 1; i++) {
-                    result =
-                        (result * (amount * (PRECISION_FACTOR + (rate / 12)))) /
-                        PRECISION_FACTOR;
-                }
+            return interestLoanCompound(interval, rate, term, amount);
+        }
+    }
+
+    function interestLoanSimple(
+        uint256 interval,
+        uint256 rate,
+        uint256 term,
+        uint256 amount
+    ) public pure returns (uint256) {
+        if (interval == 15 days) {
+            return (amount * (rate / 24)) * term;
+        } else {
+            return (amount * (rate / 12)) * term;
+        }
+    }
+
+    function interestLoanCompound(
+        uint256 interval,
+        uint256 rate,
+        uint256 term,
+        uint256 amount
+    ) public pure returns (uint256) {
+        if (interval == 15 days) {
+            uint256 result = amount * (PRECISION_FACTOR + (rate / 24));
+            for (uint256 i = 0; i < term - 1; i++) {
+                result =
+                    (result * (amount * (PRECISION_FACTOR + (rate / 24)))) /
+                    PRECISION_FACTOR;
+            }
+            return result;
+        } else {
+            uint256 result = amount * (PRECISION_FACTOR + (rate / 12));
+            for (uint256 i = 0; i < term - 1; i++) {
+                result =
+                    (result * (amount * (PRECISION_FACTOR + (rate / 12)))) /
+                    PRECISION_FACTOR;
             }
         }
     }
