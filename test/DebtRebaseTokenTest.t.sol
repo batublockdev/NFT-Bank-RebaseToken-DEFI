@@ -4,6 +4,8 @@ pragma solidity ^0.8.24;
 
 import {Test, console} from "forge-std/Test.sol";
 import {DebtRebaseToken} from "../src/DebtRebaseToken.sol";
+import {IRebaseToken} from "../src/Interface/IRebaseToken.sol";
+import {Vault} from "../src/Vault.sol";
 
 contract RebaseTokenTest is Test {
     //USERS
@@ -15,15 +17,33 @@ contract RebaseTokenTest is Test {
     uint256 private constant PRECISION_FACTOR = 1e18;
 
     DebtRebaseToken private rebaseToken;
+    Vault private vault;
 
     function setUp() public {
         vm.startPrank(owner);
         rebaseToken = new DebtRebaseToken();
+        vault = new Vault(IRebaseToken(address(rebaseToken)));
+        rebaseToken.transferOwnership(address(vault));
         vm.stopPrank();
+        // Set up initial balances
         vm.deal(owner, userBalance);
         vm.deal(user, userBalance);
         vm.deal(user2, userBalance);
     }
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not the contract owner");
+        _;
+    }
+
+    ////////////////////////////////////////
+    //////////////  MATH TESTS /////////////
+    ////////////////////////////////////////
+
+    ////////////////////////////////////////
+    //////////////  MATH TESTS /////////////
+    ////////////////////////////////////////
+    function test_totalamountEqualtoAmountoPey() public {}
 
     function test_amountPayEachInterval() public {
         uint256 amount = 1000 ether;

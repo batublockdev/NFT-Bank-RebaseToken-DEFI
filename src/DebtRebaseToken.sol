@@ -136,7 +136,7 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
      * It initializes the borrower's data if it does not already exist.
      * The borrower's score is set to 100.
      */
-    function setBorrowerData(address borrower) external {
+    function setBorrowerData(address borrower) internal onlyOwner {
         if (borrowerInfo[borrower].borrower != address(0)) {
             borrowerInfo[borrower].borrower = borrower;
             borrowerInfo[borrower].score = 100;
@@ -164,7 +164,7 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
         uint256 interval,
         address borrower,
         uint256 amount
-    ) external {
+    ) external onlyOwner {
         if (loanInfo[loanId].loanId != 0) {
             revert DebtRebaseToken__AlreadyExist(loanId);
         }
@@ -174,6 +174,7 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
         if (interval != 15 days && interval != 30 days) {
             revert DebtRebaseToken__IntervalNotCorrect(interval);
         }
+        setBorrowerData(borrower);
         loanInfo[loanId].loanId = loanId;
         loanInfo[loanId].rate = (rate * PRECISION_FACTOR) / 100;
         loanInfo[loanId].typeInterest = InterestType(typeInterest);
@@ -321,7 +322,7 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
      */
     function amountPayTotal(
         uint256 loanId
-    ) public view loanExists(loanId) returns (uint256) {
+    ) external view loanExists(loanId) returns (uint256) {
         uint256 loanAmount = balanceOfLoan(loanId);
         uint256 rate = loanInfo[loanId].rate;
         InterestType typeInterest = loanInfo[loanId].typeInterest;
@@ -348,7 +349,7 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
      */
     function amountPayEachInterval(
         uint256 loanId
-    ) public view loanExists(loanId) returns (uint256) {
+    ) external view loanExists(loanId) returns (uint256) {
         uint256 loanAmount = balanceOfLoan(loanId);
         uint256 rate = loanInfo[loanId].rate;
         InterestType typeInterest = loanInfo[loanId].typeInterest;
@@ -388,7 +389,7 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
      */
     function balanceOfLoan(
         uint256 loanId
-    ) public view loanExists(loanId) returns (uint256) {
+    ) internal view loanExists(loanId) returns (uint256) {
         uint256 timeNoPayment = block.timestamp -
             loanInfo[loanId].lastPaymentTime;
         uint256 interval = loanInfo[loanId].interval;
@@ -542,6 +543,28 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
         return borrowerInfo[borrower];
     }
 
+    function getLeftTerm(uint256 loanId) external view returns (uint256) {
+        return loanInfo[loanId].leftTerms;
+    }
+
+    function getBalanceLoanMinted(
+        uint256 loanId
+    ) external view returns (uint256) {
+        return loanInfo[loanId].loanBalance;
+    }
+
+    function getTotalPenaltyLoan(
+        uint256 loanId
+    ) external view returns (uint256) {
+        return loanInfo[loanId].penaltyAmount;
+    }
+
+    function gettotalloanPlusInterest(
+        uint256 loanId
+    ) external view returns (uint256) {
+        return totalloanPlusInterest(loanId);
+    }
+
     function getPenaltyRate() external view returns (uint256) {
         return s_penaltyRate;
     }
@@ -556,5 +579,9 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
 
     function getPointsScorePenalty() external pure returns (uint256) {
         return POINTS_SCORE_PENALTY;
+    }
+
+    function getBalaceOfLoan(uint256 loanId) external view returns (uint256) {
+        return balanceOfLoan(loanId);
     }
 }
