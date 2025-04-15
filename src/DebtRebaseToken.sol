@@ -100,7 +100,7 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
     // ------Modifiers ---------
 
     modifier loanExists(uint256 loanId) {
-        if (loanInfo[loanId].loanId != 0) {
+        if (loanInfo[loanId].loanId == 0) {
             revert DebtRebaseToken__LoanDoesNotExist(loanId);
         }
         _;

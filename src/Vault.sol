@@ -5,6 +5,7 @@ pragma solidity ^0.8.24;
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IRebaseToken} from "./Interface/IRebaseToken.sol";
+import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 
 /**
  * @title Vault
@@ -13,7 +14,7 @@ import {IRebaseToken} from "./Interface/IRebaseToken.sol";
  * listing the nfts that are going to be used as collateral
  */
 
-contract Vault {
+contract Vault is IERC721Receiver {
     // Custom errors
     error Vault__NotOwnerOfNFT(address addressNft, uint256 nftId);
     error Vault__NotApprovedForNFT(address addressNft, uint256 nftId);
@@ -27,7 +28,7 @@ contract Vault {
     error Vault__FaildReceiveToken(address token);
     error Vault__loanNotFound(uint256 loanId);
     error Vault__loanOfferNotFound(uint256 offerId);
-    error Vault__NotOwnerOfLoan(uint256 loanId);
+    error Vault__NotOwnerOfLoan(address borrower);
     error Vault__FaildSendToken(address token);
 
     // Struct to hold loan details
@@ -74,15 +75,27 @@ contract Vault {
     mapping(uint256 offerId => LoanOffer) public loanOffers;
     /// Mapping to store approved loans
     mapping(uint256 loanId => Loan) public approvedLoans;
+
+    // Array to store loan IDs
+    // Array to store offer IDs
+    // Array to store approved loan IDs
+    uint256[] public loanIds;
+    uint256[] public offerIds;
+    uint256[] public approvedLoanIds;
+
     //---- Modifiers ----//
-    modifier checkNft(address addressNft, uint256 nftId) {
-        if (IERC721(addressNft).ownerOf(nftId) != msg.sender) {
+    modifier checkNft(
+        address addressNft,
+        uint256 nftId,
+        address borrower
+    ) {
+        if (IERC721(addressNft).ownerOf(nftId) != borrower) {
             revert Vault__NotOwnerOfNFT(addressNft, nftId);
         }
         if (IERC721(addressNft).getApproved(nftId) != address(this)) {
             revert Vault__NotApprovedForNFT(addressNft, nftId);
         }
-        if (IERC721(addressNft).isApprovedForAll(msg.sender, address(this))) {
+        if (IERC721(addressNft).isApprovedForAll(borrower, address(this))) {
             revert Vault__NotApprovedForNFT(addressNft, nftId);
         }
         _;
@@ -107,7 +120,7 @@ contract Vault {
         if (token == address(0)) {
             revert Vault__TokenNotValid(token);
         }
-        if (IERC20(token).allowance(from, address(this)) >= amount) {
+        if (IERC20(token).allowance(from, address(this)) < amount) {
             revert Vault__NotApprovedForToken(token);
         }
         _;
@@ -143,18 +156,25 @@ contract Vault {
         address token,
         address addressNft,
         uint256 nftId
-    ) public checkNft(addressNft, nftId) {
+    ) public checkNft(addressNft, nftId, msg.sender) {
         if (typeInterest != 0 && typeInterest != 1) {
             revert Vault__TypeInterestNotValid(typeInterest);
         }
         if (interval != 0 && interval != 1) {
             revert Vault__IntervalNotValid(interval);
         }
+        if (interval == 0) {
+            interval = 15 days;
+        } else {
+            interval = 30 days;
+        }
+
         // Logic to request a loan
         // Create a new loan
         uint256 loanId = uint256(
             keccak256(abi.encodePacked(msg.sender, block.timestamp))
         );
+        loanIds.push(loanId);
         requestloans[loanId] = RequestLoan({
             loanId: loanId,
             borrower: msg.sender,
@@ -213,12 +233,18 @@ contract Vault {
         if (interval != 0 && interval != 1) {
             revert Vault__IntervalNotValid(interval);
         }
+        if (interval == 0) {
+            interval = 15 days;
+        } else {
+            interval = 30 days;
+        }
         // Logic to offer a loan
 
         // Create a new loan offer
         uint256 offerId = uint256(
             keccak256(abi.encodePacked(msg.sender, block.timestamp))
         );
+        offerIds.push(offerId);
         loanOffers[offerId] = LoanOffer({
             offerId: offerId,
             loanId: loanId,
@@ -242,10 +268,14 @@ contract Vault {
     )
         public
         loanRequestExists(loanId)
-        checkNft(requestloans[loanId].addressNft, requestloans[loanId].nftId)
+        checkNft(
+            requestloans[loanId].addressNft,
+            requestloans[loanId].nftId,
+            requestloans[loanId].borrower
+        )
         tokenCheck(
             loanOffers[offerId].token,
-            msg.sender,
+            loanOffers[offerId].lender,
             loanOffers[offerId].amount
         )
     {
@@ -256,7 +286,7 @@ contract Vault {
             revert Vault__loanOfferNotFound(offerId);
         }
         if (requestloans[loanId].borrower != msg.sender) {
-            revert Vault__NotOwnerOfLoan(loanId);
+            revert Vault__NotOwnerOfLoan(requestloans[loanId].borrower);
         }
         // Logic to approve a loan
         // Transfer the NFT to the contract
@@ -290,6 +320,7 @@ contract Vault {
             addressNft: requestloans[loanId].addressNft,
             nftId: requestloans[loanId].nftId
         });
+        approvedLoanIds.push(loanId);
         i_rebaseToken.setLoanData(
             loanId,
             loanOffers[offerId].rate,
@@ -344,8 +375,7 @@ contract Vault {
 
             uint256 protocolFee = ((interestPerInterval + penaltyAmount) * 5) /
                 100;
-            uint256 amountToBurn = amountPay - interestPerInterval;
-            i_rebaseToken.burn(loanId, amountToBurn);
+            i_rebaseToken.burn(loanId, amountPay - interestPerInterval);
             if (
                 i_rebaseToken.getBalanceLoanMinted(loanId) == 0 ||
                 i_rebaseToken.getLeftTerm(loanId) == 0
@@ -438,5 +468,14 @@ contract Vault {
             approvedLoans[loanId].nftId
         );
         delete approvedLoans[loanId];
+    }
+
+    function onERC721Received(
+        address operator,
+        address from,
+        uint256 tokenId,
+        bytes calldata data
+    ) external pure override returns (bytes4) {
+        return IERC721Receiver.onERC721Received.selector;
     }
 }
