@@ -54,6 +54,7 @@ contract RebaseTokenTest is Test {
             0
         );
         uint256 loanIdx = vault.loanIds(0);
+        loanId = vault.loanIds(0);
         vm.prank(lender);
         token.approve(address(vault), 1000 ether);
         vm.startPrank(lender);
@@ -66,21 +67,82 @@ contract RebaseTokenTest is Test {
     }
 
     ////////////////////////////////////////
-    //////////////  MATH TESTS /////////////
+    //////////////  BANK TESTS /////////////
     ////////////////////////////////////////
+    function test_payLoan() public loan {
+        uint256 debtBefore = rebaseToken.getBalaceOfLoan(loanId);
+        uint256 balanceBefore = rebaseToken.balanceOf(borrower);
 
-    ////////////////////////////////////////
-    //////////////  MATH TESTS /////////////
-    ////////////////////////////////////////
+        console.log("Debt Amount: ", debtBefore);
+        console.log("Balance Amount: ", balanceBefore);
+        uint256 amountToPayEach = rebaseToken.amountPayEachInterval(loanId);
+        token.mint(borrower, amountToPayEach);
+        vm.prank(borrower);
+        token.approve(address(vault), amountToPayEach);
+        vm.prank(borrower);
+        vault.payLoan(loanId);
+
+        uint256 debtAfter = rebaseToken.getBalaceOfLoan(loanId);
+        uint256 balanceAfter = rebaseToken.balanceOf(borrower);
+
+        console.log("Debt Amount: ", debtAfter);
+        console.log("Balance Amount: ", balanceAfter);
+    }
+
+    function test_penalty_Increase() public loan {
+        uint256 debtBefore = rebaseToken.getBalaceOfLoan(loanId);
+        uint256 balanceBefore = rebaseToken.balanceOf(borrower);
+
+        console.log("Debt Amount: ", debtBefore);
+        console.log("Balance Amount: ", balanceBefore);
+
+        address nftOwner = mockERC721.ownerOf(0);
+
+        assertEq(nftOwner, address(vault));
+
+        vm.warp(block.timestamp + 60 days);
+        vault.updateLoanState(loanId);
+
+        uint256 debtAfter = rebaseToken.getBalaceOfLoan(loanId);
+        uint256 balanceAfter = rebaseToken.balanceOf(borrower);
+
+        console.log("Balance Amount2: ", balanceAfter);
+        console.log("Debt Amount2: ", debtAfter);
+
+        nftOwner = mockERC721.ownerOf(0);
+
+        assertEq(nftOwner, address(vault));
+
+        vm.warp(block.timestamp + 80 days);
+
+        vault.updateLoanState(loanId);
+
+        uint256 debtAfter2 = rebaseToken.getBalaceOfLoan(loanId);
+        uint256 balanceAfter2 = rebaseToken.balanceOf(borrower);
+
+        console.log("Balance Amount2: ", balanceAfter2);
+        console.log("Debt Amount2: ", debtAfter2);
+        nftOwner = mockERC721.ownerOf(0);
+
+        assertEq(nftOwner, lender);
+    }
+
     function test_totalamountEqualtoAmountoPey() public loan {
         loanId = vault.loanIds(0);
         uint256 amountToPayEach = rebaseToken.amountPayEachInterval(loanId);
         uint256 totalAmount = rebaseToken.amountPayTotal(loanId);
-        uint256 totalAmountExpected = amountToPayEach * 12;
-        console.log("Total Amount Expected: ", totalAmountExpected);
+        console.log("Total Amount Expected: ", amountToPayEach);
         console.log("Total Amount: ", totalAmount);
+        assertEq(
+            totalAmount,
+            (amountToPayEach * rebaseToken.getLeftTerm(loanId)),
+            "Total Amount is  equal to Amount to Pay Each Interval multiply by the terms"
+        );
     }
 
+    ////////////////////////////////////////
+    //////////////  MATH TESTS /////////////
+    ////////////////////////////////////////
     function test_amountPayEachInterval() public {
         uint256 amount = 1000 ether;
         uint256 term = 12;
@@ -142,5 +204,45 @@ contract RebaseTokenTest is Test {
             uint256 penaltyAmount = (amount * ecu) / PRECISION_FACTOR;
             console.log("Penalty Amount: ", penaltyAmount);
         }
+    }
+
+    function test_interestLoanCompound() public loan {
+        uint256 interval = 30 days;
+        uint256 rate = (10 * 1e18) / 100; // 10% interest rate
+        uint256 term = 12; // 12 months
+        uint256 amount = 1000 ether; // Principal amount
+        uint256 amountBalanceOf = rebaseToken.getBalaceOfLoan(loanId);
+        console.log("Amount: ", amount);
+        console.log("Amount2: ", amountBalanceOf);
+
+        uint256 periods;
+        if (interval == 15 days) {
+            periods = 24; // bi-monthly
+        } else {
+            periods = 12; // monthly
+        }
+
+        // (1 + r)
+        uint256 base = PRECISION_FACTOR + (rate / periods);
+        uint256 exponent = term;
+
+        // Compound: (1 + r)^n using exponentiation by squaring
+        uint256 factor = PRECISION_FACTOR;
+        while (exponent > 0) {
+            if (exponent % 2 == 1) {
+                factor = (factor * base) / PRECISION_FACTOR;
+            }
+            base = (base * base) / PRECISION_FACTOR;
+            exponent /= 2;
+        }
+        console.log("Factor: ", factor);
+        console.log("Factor: ", base);
+
+        // Final amount = principal * compound factor
+        uint256 result = (amount * factor) / PRECISION_FACTOR;
+        uint256 result2 = (amountBalanceOf * factor) / PRECISION_FACTOR;
+
+        console.log("Final Amount: ", result);
+        console.log("Final Amount: ", result2);
     }
 }
