@@ -40,4 +40,6 @@ interface IRebaseToken {
     function getBalanceLoanMinted(
         uint256 loanId
     ) external view returns (uint256);
+
+    function getTotalInterest(uint256 loanId) external view returns (uint256);
 }

@@ -126,6 +126,16 @@ contract Vault is IERC721Receiver {
         _;
     }
 
+    modifier checkDataInput(uint256 typeInterest, uint256 interval) {
+        if (typeInterest != 0 && typeInterest != 1) {
+            revert Vault__TypeInterestNotValid(typeInterest);
+        }
+        if (interval != 0 && interval != 1) {
+            revert Vault__IntervalNotValid(interval);
+        }
+        _;
+    }
+
     IRebaseToken private immutable i_rebaseToken;
 
     constructor(IRebaseToken _rebaseToken) {
@@ -156,13 +166,11 @@ contract Vault is IERC721Receiver {
         address token,
         address addressNft,
         uint256 nftId
-    ) public checkNft(addressNft, nftId, msg.sender) {
-        if (typeInterest != 0 && typeInterest != 1) {
-            revert Vault__TypeInterestNotValid(typeInterest);
-        }
-        if (interval != 0 && interval != 1) {
-            revert Vault__IntervalNotValid(interval);
-        }
+    )
+        public
+        checkNft(addressNft, nftId, msg.sender)
+        checkDataInput(typeInterest, interval)
+    {
         if (interval == 0) {
             interval = 15 days;
         } else {
@@ -213,7 +221,12 @@ contract Vault is IERC721Receiver {
         uint256 term,
         uint256 interval,
         address token
-    ) public tokenCheck(token, msg.sender, amount) loanRequestExists(loanId) {
+    )
+        public
+        tokenCheck(token, msg.sender, amount)
+        loanRequestExists(loanId)
+        checkDataInput(typeInterest, interval)
+    {
         if (rate == 0) {
             revert Vault__RateNotValid(rate);
         }
@@ -223,16 +236,7 @@ contract Vault is IERC721Receiver {
         if (amount == 0) {
             revert Vault__AmountNotValid(amount);
         }
-        if (token == address(0)) {
-            revert Vault__TokenNotValid(token);
-        }
 
-        if (typeInterest != 0 && typeInterest != 1) {
-            revert Vault__TypeInterestNotValid(typeInterest);
-        }
-        if (interval != 0 && interval != 1) {
-            revert Vault__IntervalNotValid(interval);
-        }
         if (interval == 0) {
             interval = 15 days;
         } else {
@@ -342,7 +346,7 @@ contract Vault is IERC721Receiver {
      * @notice this function is used to pay the loan
      * @dev this function checks if the loan exists
      * and if the borrower has approved the contract to spend the tokens
-     * the protocol charges a fee of 5% of the interests earned
+     * the protocol charges a fee of 3% of the interests earned
      */
     function payLoan(uint256 loanId) public loanExists(loanId) {
         uint256 state = i_rebaseToken.loanState(loanId);
@@ -365,23 +369,16 @@ contract Vault is IERC721Receiver {
             } else {
                 penalty = i_rebaseToken.getTotalPenaltyLoan(loanId);
             }
-            uint256 penaltyAmount = penalty / approvedLoans[loanId].term;
-            uint256 totalAmount = i_rebaseToken.gettotalloanPlusInterest(
-                loanId
-            );
-            uint256 amount = approvedLoans[loanId].amount;
-            uint256 interestPerInterval = (amount - totalAmount) /
-                approvedLoans[loanId].term;
 
-            uint256 protocolFee = ((interestPerInterval + penaltyAmount) * 5) /
+            uint256 interest = i_rebaseToken.getTotalInterest(loanId);
+
+            uint256 penaltyAmount = penalty / approvedLoans[loanId].term;
+
+            uint256 interestPerInterval = interest / approvedLoans[loanId].term;
+
+            uint256 protocolFee = ((interestPerInterval + penaltyAmount) * 3) /
                 100;
             i_rebaseToken.burn(loanId, amountPay - interestPerInterval);
-            if (
-                i_rebaseToken.getBalanceLoanMinted(loanId) == 0 ||
-                i_rebaseToken.getLeftTerm(loanId) == 0
-            ) {
-                liquidateLoan(loanId, approvedLoans[loanId].borrower);
-            }
             if (
                 IERC20(approvedLoans[loanId].token).transfer(
                     approvedLoans[loanId].lender,
@@ -389,6 +386,12 @@ contract Vault is IERC721Receiver {
                 ) == false
             ) {
                 revert Vault__FaildSendToken(approvedLoans[loanId].token);
+            }
+            if (
+                i_rebaseToken.getBalanceLoanMinted(loanId) == 0 ||
+                i_rebaseToken.getLeftTerm(loanId) == 0
+            ) {
+                liquidateLoan(loanId, approvedLoans[loanId].borrower);
             }
         }
     }
@@ -398,7 +401,7 @@ contract Vault is IERC721Receiver {
      * @param loanId the id of the loan
      * @notice this function is used to pay the total amount of the loan
      * @dev this function checks if the loan exists
-     * the protocol charges a fee of 5% of the total amount
+     * the protocol charges a fee of 3% of the total amount
      */
     function payLoanTotal(uint256 loanId) public loanExists(loanId) {
         uint256 state = i_rebaseToken.loanState(loanId);
@@ -420,15 +423,8 @@ contract Vault is IERC721Receiver {
                 revert Vault__FaildReceiveToken(approvedLoans[loanId].token);
             }
             uint256 protocolFee = ((amountPayPlusInterest - amountNoInterest) *
-                5) / 100;
-            uint256 amountToBurn = amountNoInterest;
-            i_rebaseToken.burn(loanId, amountToBurn);
-            if (
-                i_rebaseToken.getBalanceLoanMinted(loanId) == 0 ||
-                i_rebaseToken.getLeftTerm(loanId) == 0
-            ) {
-                liquidateLoan(loanId, approvedLoans[loanId].borrower);
-            }
+                3) / 100;
+            i_rebaseToken.burn(loanId, amountNoInterest);
             if (
                 IERC20(approvedLoans[loanId].token).transfer(
                     approvedLoans[loanId].lender,
@@ -436,6 +432,12 @@ contract Vault is IERC721Receiver {
                 ) == false
             ) {
                 revert Vault__FaildSendToken(approvedLoans[loanId].token);
+            }
+            if (
+                i_rebaseToken.getBalanceLoanMinted(loanId) == 0 ||
+                i_rebaseToken.getLeftTerm(loanId) == 0
+            ) {
+                liquidateLoan(loanId, approvedLoans[loanId].borrower);
             }
         }
     }

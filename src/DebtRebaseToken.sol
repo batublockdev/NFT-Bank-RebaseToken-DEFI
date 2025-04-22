@@ -205,26 +205,26 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
 
     /**
      * @param loanId the ID of the loan
-     * @param amount the amount to be burned
+     * @param amountToPay the amount to be burned
      * @notice This function allows the owner to burn tokens from the borrower
      * which represent the user pain the debt in the protocol.
      */
     function burn(
         uint256 loanId,
-        uint256 amount
+        uint256 amountToPay
     ) external onlyOwner loanExists(loanId) {
         address borrower = loanInfo[loanId].borrower;
-        loanInfo[loanId].loanBalance -= amount;
+        loanInfo[loanId].loanBalance -= amountToPay;
         loanInfo[loanId].leftTerms--;
         loanInfo[loanId].lastUpdateTime = block.timestamp;
         loanInfo[loanId].lastPayTime = block.timestamp;
-        borrowerInfo[borrower].totalPaidAmount += amount;
-        _burn(borrower, amount);
+        borrowerInfo[borrower].totalPaidAmount += amountToPay;
+        _burn(borrower, amountToPay);
         if (
             loanInfo[loanId].leftTerms == 0 || loanInfo[loanId].loanBalance == 0
         ) {
             delete loanInfo[loanId];
-            emit CompletePaid(loanId, borrower, amount);
+            emit CompletePaid(loanId, borrower, amountToPay);
         }
     }
 
@@ -276,8 +276,9 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
      * Otherwise, it returns false.
      */
     function checkLoanMisses(uint256 loanId) internal view returns (bool) {
-        uint256 timeNoPayment = block.timestamp - loanInfo[loanId].lastPayTime;
-        uint256 interval = loanInfo[loanId].interval;
+        loanData memory loan = loanInfo[loanId];
+        uint256 timeNoPayment = block.timestamp - loan.lastPayTime;
+        uint256 interval = loan.interval;
         uint256 timePenalty = interval + s_daysGracePeriod;
         if (timeNoPayment > timePenalty) {
             if ((timeNoPayment - timePenalty) > (timePenalty * 2)) {
@@ -320,11 +321,12 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
     function amountPayTotal(
         uint256 loanId
     ) external view loanExists(loanId) returns (uint256) {
+        loanData memory loan = loanInfo[loanId];
         uint256 loanAmount = balanceOfLoan(loanId);
-        uint256 rate = loanInfo[loanId].rate;
-        InterestType typeInterest = loanInfo[loanId].typeInterest;
-        uint256 term = loanInfo[loanId].leftTerms;
-        uint256 interval = loanInfo[loanId].interval;
+        uint256 rate = loan.rate;
+        InterestType typeInterest = loan.typeInterest;
+        uint256 term = loan.leftTerms;
+        uint256 interval = loan.interval;
 
         if (typeInterest == InterestType.Simple) {
             // Simple interest
@@ -347,23 +349,23 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
     function amountPayEachInterval(
         uint256 loanId
     ) external view loanExists(loanId) returns (uint256) {
+        loanData memory loan = loanInfo[loanId];
         uint256 loanAmount = balanceOfLoan(loanId);
-        uint256 rate = loanInfo[loanId].rate;
-        InterestType typeInterest = loanInfo[loanId].typeInterest;
-        uint256 leftTerms = loanInfo[loanId].leftTerms;
-        uint256 interval = loanInfo[loanId].interval;
+        uint256 penalty = loan.penaltyAmount;
+        InterestType typeInterest = loan.typeInterest;
+        uint256 terms = loan.term;
 
         if (typeInterest == InterestType.Simple) {
+            uint256 total = loanAmount +
+                totalloanPlusInterest(loanId) +
+                penalty;
             // Simple interest
-            return
-                interestLoanSimple(interval, rate, leftTerms, loanAmount) /
-                leftTerms;
+            return total / terms;
         } else if (typeInterest == InterestType.Compound) {
+            uint256 total = totalloanPlusInterest(loanId) + penalty;
             // Compound interest
 
-            return
-                interestLoanCompound(interval, rate, leftTerms, loanAmount) /
-                leftTerms;
+            return total / terms;
         }
     }
 
@@ -377,26 +379,22 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
      * it applies the penalty rate to the loan balance.
      */
     function balanceOfLoan(uint256 loanId) internal view returns (uint256) {
-        uint256 timeNoPayment = block.timestamp -
-            loanInfo[loanId].lastUpdateTime;
-        uint256 interval = loanInfo[loanId].interval;
-        uint256 amount = loanInfo[loanId].loanBalance;
+        loanData memory loan = loanInfo[loanId];
 
-        if (timeNoPayment > (interval + s_daysGracePeriod)) {
-            uint256 ecu = (PRECISION_FACTOR + s_penaltyRate);
-            for (
-                uint96 i = 0;
-                i <
-                ((timeNoPayment - (interval + s_daysGracePeriod)) / 1 days) - 1;
-                i++
-            ) {
-                ecu =
-                    (ecu * (PRECISION_FACTOR + s_penaltyRate)) /
-                    PRECISION_FACTOR;
-            }
+        uint256 timeNoPayment = block.timestamp - loan.lastUpdateTime;
+        uint256 interval = loan.interval;
+        uint256 amount = loan.loanBalance;
+
+        uint256 overdue = timeNoPayment > (interval + s_daysGracePeriod)
+            ? timeNoPayment - (interval + s_daysGracePeriod)
+            : 0;
+        if (overdue > 1 days) {
+            uint256 daysLate = overdue / 1 days;
+            // compound penalty = (1 + penaltyRate) ** daysLate
+            uint256 ecu = pow(PRECISION_FACTOR + s_penaltyRate, daysLate);
             return (amount * ecu) / PRECISION_FACTOR;
         } else {
-            return (loanInfo[loanId].loanBalance);
+            return (loan.loanBalance);
         }
     }
 
@@ -410,11 +408,13 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
     function totalloanPlusInterest(
         uint256 loanId
     ) public view loanExists(loanId) returns (uint256) {
-        uint256 amount = loanInfo[loanId].amount;
-        uint256 rate = loanInfo[loanId].rate;
-        InterestType typeInterest = loanInfo[loanId].typeInterest;
-        uint256 term = loanInfo[loanId].term;
-        uint256 interval = loanInfo[loanId].interval;
+        loanData memory loan = loanInfo[loanId];
+
+        uint256 amount = loan.amount;
+        uint256 rate = loan.rate;
+        InterestType typeInterest = loan.typeInterest;
+        uint256 term = loan.term;
+        uint256 interval = loan.interval;
 
         if (typeInterest == InterestType.Simple) {
             // Simple interest
@@ -422,6 +422,27 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
         } else if (typeInterest == InterestType.Compound) {
             // Compound interest
             return interestLoanCompound(interval, rate, term, amount);
+        }
+    }
+
+    function getTotalInterest(
+        uint256 loanId
+    ) external view loanExists(loanId) returns (uint256) {
+        loanData memory loan = loanInfo[loanId];
+
+        uint256 amount = loan.amount;
+        uint256 rate = loan.rate;
+        InterestType typeInterest = loan.typeInterest;
+        uint256 term = loan.term;
+        uint256 interval = loan.interval;
+
+        if (typeInterest == InterestType.Simple) {
+            // Simple interest
+            return interestLoanSimple(interval, rate, term, amount);
+        } else if (typeInterest == InterestType.Compound) {
+            // Compound interest
+            return (interestLoanCompound(interval, rate, term, amount) -
+                amount);
         }
     }
 
@@ -441,9 +462,9 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
         uint256 amount
     ) internal pure returns (uint256) {
         if (interval == 15 days) {
-            return (amount * (rate / 24)) * term;
+            return ((amount * (rate / 24)) * term) / PRECISION_FACTOR;
         } else {
-            return (amount * (rate / 12)) * term;
+            return ((amount * (rate / 12)) * term) / PRECISION_FACTOR;
         }
     }
 
@@ -474,17 +495,28 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
         uint256 exponent = term;
 
         // Compound: (1 + r)^n using exponentiation by squaring
-        uint256 factor = PRECISION_FACTOR;
-        while (exponent > 0) {
-            if (exponent % 2 == 1) {
-                factor = (factor * base) / PRECISION_FACTOR;
-            }
-            base = (base * base) / PRECISION_FACTOR;
-            exponent /= 2;
-        }
+        uint256 factor = pow(base, exponent);
 
         // Final amount = principal * compound factor
         return (amount * factor) / PRECISION_FACTOR;
+    }
+
+    function pow(
+        uint256 base,
+        uint256 exp
+    ) internal pure returns (uint256 result) {
+        result = PRECISION_FACTOR;
+        while (exp > 0) {
+            if (exp % 2 == 1) {
+                result = (result * base) / PRECISION_FACTOR;
+            }
+            base = (base * base) / PRECISION_FACTOR;
+            exp /= 2;
+        }
+    }
+
+    function superBalanceOf(address borrower) public view returns (uint256) {
+        return super.balanceOf(borrower);
     }
 
     /**
@@ -538,6 +570,10 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
 
     function getLeftTerm(uint256 loanId) external view returns (uint256) {
         return loanInfo[loanId].leftTerms;
+    }
+
+    function getTerms(uint256 loanId) external view returns (uint256) {
+        return loanInfo[loanId].term;
     }
 
     function getBalanceLoanMinted(
