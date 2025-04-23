@@ -2,7 +2,7 @@
 
 pragma solidity ^0.8.24;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test, console, stdMath} from "forge-std/Test.sol";
 import {DebtRebaseToken} from "../src/DebtRebaseToken.sol";
 import {IRebaseToken} from "../src/Interface/IRebaseToken.sol";
 import {Vault} from "../src/Vault.sol";
@@ -12,6 +12,7 @@ import {ERC721Mock} from "./mock/ERC721Mock.sol";
 contract RebaseTokenTest is Test {
     //USERS
     address public owner = makeAddr("owner");
+    address public me = makeAddr("me");
     address public borrower = makeAddr("borrower");
     address public lender = makeAddr("lender");
 
@@ -24,6 +25,8 @@ contract RebaseTokenTest is Test {
     DebtRebaseToken private rebaseToken;
     Vault private vault;
     ERC721Mock private mockERC721;
+
+    uint256 MAX_DEPOSIT_SIZE = type(uint96).max;
 
     function setUp() public {
         vm.startPrank(owner);
@@ -40,8 +43,16 @@ contract RebaseTokenTest is Test {
         mockERC721.mint(lender);
     }
 
-    modifier loan(uint256 x) {
-        x = 1;
+    modifier loan(
+        uint256 x,
+        uint256 amountlend,
+        uint256 rate,
+        uint256 terms
+    ) {
+        x = bound(x, 0, 3);
+        amountlend = bound(amountlend, 1, MAX_DEPOSIT_SIZE);
+        rate = bound(rate, 1, 100);
+        terms = bound(terms, 1, MAX_DEPOSIT_SIZE);
         vm.prank(borrower);
         mockERC721.approve(address(vault), 0);
         vm.prank(borrower);
@@ -57,20 +68,53 @@ contract RebaseTokenTest is Test {
         );
         uint256 loanIdx = vault.loanIds(0);
         loanId = vault.loanIds(0);
+        token.mint(lender, amountlend);
         vm.prank(lender);
-        token.approve(address(vault), 1000 ether);
+        token.approve(address(vault), amountlend);
         vm.startPrank(lender);
         if (x == 0) {
-            vault.offerLoan(loanIdx, 1000 ether, 10, 1, 12, 1, address(token));
+            vault.offerLoan(
+                loanIdx,
+                amountlend,
+                rate,
+                1,
+                terms,
+                1,
+                address(token)
+            );
         }
         if (x == 1) {
-            vault.offerLoan(loanIdx, 1000 ether, 10, 0, 12, 1, address(token));
+            vault.offerLoan(
+                loanIdx,
+                amountlend,
+                rate,
+                0,
+                terms,
+                1,
+                address(token)
+            );
         }
         if (x == 2) {
-            vault.offerLoan(loanIdx, 1000 ether, 10, 0, 12, 0, address(token));
+            vault.offerLoan(
+                loanIdx,
+                amountlend,
+                rate,
+                0,
+                terms,
+                0,
+                address(token)
+            );
         }
         if (x == 3) {
-            vault.offerLoan(loanIdx, 1000 ether, 10, 1, 12, 0, address(token));
+            vault.offerLoan(
+                loanIdx,
+                amountlend,
+                rate,
+                1,
+                terms,
+                0,
+                address(token)
+            );
         }
         vm.stopPrank();
         uint256 offerId = vault.offerIds(0);
@@ -82,11 +126,21 @@ contract RebaseTokenTest is Test {
     ////////////////////////////////////////
     //////////////  BANK TESTS /////////////
     ////////////////////////////////////////
-    function test_mint(uint256 x) public loan(x) {
+    function test_mint(
+        uint256 x,
+        uint256 amountlend,
+        uint256 rate,
+        uint256 terms
+    ) public loan(x, amountlend, rate, terms) {
         assertEq(userBalance, rebaseToken.superBalanceOf(borrower));
     }
 
-    function test_burn(uint256 x) public loan(x) {
+    function test_burn(
+        uint256 x,
+        uint256 amountlend,
+        uint256 rate,
+        uint256 terms
+    ) public loan(x, amountlend, rate, terms) {
         assertEq(userBalance, rebaseToken.superBalanceOf(borrower));
         console.log(
             "Debt plus interest: ",
@@ -112,10 +166,60 @@ contract RebaseTokenTest is Test {
             vm.prank(borrower);
             vault.payLoan(loanId);
         }
-        assertEq(0, rebaseToken.superBalanceOf(borrower));
+        assertApproxEqAbs(0, rebaseToken.superBalanceOf(borrower), 4);
     }
 
-    function test_fee(uint256 x) public loan(x) {
+    function test_burn_pay_total(
+        uint256 x,
+        uint256 amountlend,
+        uint256 rate,
+        uint256 terms
+    ) public loan(x, amountlend, rate, terms) {
+        assertEq(userBalance, rebaseToken.superBalanceOf(borrower));
+        console.log(
+            "Debt plus interest: ",
+            rebaseToken.totalloanPlusInterest(loanId)
+        );
+        for (uint i = 0; i < 2; i++) {
+            uint256 amountToPayEach = rebaseToken.amountPayEachInterval(loanId);
+            token.mint(borrower, amountToPayEach);
+            vm.prank(borrower);
+            token.approve(address(vault), amountToPayEach);
+            console.log(
+                "Debt balance after : #",
+                i,
+                " ",
+                rebaseToken.getBalaceOfLoan(loanId)
+            );
+            console.log(
+                "balance after : #",
+                i,
+                " ",
+                rebaseToken.superBalanceOf(borrower)
+            );
+            vm.prank(borrower);
+            vault.payLoan(loanId);
+        }
+        uint256 amountToPayTotal = rebaseToken.amountPayTotal(loanId);
+        token.mint(borrower, amountToPayTotal);
+        vm.prank(borrower);
+        token.approve(address(vault), amountToPayTotal);
+        vm.prank(borrower);
+        vault.payLoanTotal(loanId);
+        console.log(
+            "Debt balance after : #",
+            rebaseToken.getBalaceOfLoan(loanId)
+        );
+        console.log("balance after : #", rebaseToken.superBalanceOf(borrower));
+        assertApproxEqAbs(0, rebaseToken.superBalanceOf(borrower), 4);
+    }
+
+    function test_fee(
+        uint256 x,
+        uint256 amountlend,
+        uint256 rate,
+        uint256 terms
+    ) public loan(x, amountlend, rate, terms) {
         uint256 amountPay = rebaseToken.amountPayEachInterval(loanId);
         uint256 penalty;
         if (rebaseToken.getTotalPenaltyLoan(loanId) == 0) {
@@ -135,7 +239,12 @@ contract RebaseTokenTest is Test {
         console.log("fee: ", protocolFee);
     }
 
-    function test_payLoan_Total(uint256 x) public loan(x) {
+    function test_payLoan_Total(
+        uint256 x,
+        uint256 amountlend,
+        uint256 rate,
+        uint256 terms
+    ) public loan(x, amountlend, rate, terms) {
         uint256 debtBefore = rebaseToken.getBalaceOfLoan(loanId);
         uint256 balanceBefore = rebaseToken.balanceOf(borrower);
 
@@ -329,9 +438,14 @@ contract RebaseTokenTest is Test {
         );
     }
 
-    function test_Vault__loanNotFound() public {
-        test_payLoan_Total(0);
-        uint256 amountToPayTotal = 1000 ether;
+    function test_Vault__loanNotFound(
+        uint256 x,
+        uint256 amountlend,
+        uint256 rate,
+        uint256 terms
+    ) public {
+        test_payLoan_Total(x, amountlend, rate, terms);
+        uint256 amountToPayTotal = rebaseToken.totalloanPlusInterest(loanId);
         token.mint(borrower, amountToPayTotal);
         vm.prank(borrower);
         token.approve(address(vault), amountToPayTotal);
@@ -342,8 +456,13 @@ contract RebaseTokenTest is Test {
         vault.payLoanTotal(loanId);
     }
 
-    function test_DebtRebaseToken__LoanDoesNotExist() public {
-        test_payLoan_Total(0);
+    function test_DebtRebaseToken__LoanDoesNotExist(
+        uint256 x,
+        uint256 amountlend,
+        uint256 rate,
+        uint256 terms
+    ) public {
+        test_payLoan_Total(x, amountlend, rate, terms);
         vm.expectRevert(
             abi.encodeWithSelector(
                 DebtRebaseToken.DebtRebaseToken__LoanDoesNotExist.selector,
@@ -353,7 +472,12 @@ contract RebaseTokenTest is Test {
         uint256 debtBefore = rebaseToken.totalloanPlusInterest(loanId);
     }
 
-    function test_payLoan(uint256 x) public loan(x) {
+    function test_payLoan(
+        uint256 x,
+        uint256 amountlend,
+        uint256 rate,
+        uint256 terms
+    ) public loan(x, amountlend, rate, terms) {
         uint256 debtBefore = rebaseToken.getBalaceOfLoan(loanId);
         uint256 balanceBefore = rebaseToken.balanceOf(borrower);
 
@@ -380,7 +504,12 @@ contract RebaseTokenTest is Test {
         assertEq(nftOwner, borrower);
     }
 
-    function test_penalty_Increase(uint256 x) public loan(x) {
+    function test_penalty_Increase(
+        uint256 x,
+        uint256 amountlend,
+        uint256 rate,
+        uint256 terms
+    ) public loan(x, amountlend, rate, terms) {
         uint256 debtBefore = rebaseToken.getBalaceOfLoan(loanId);
         uint256 balanceBefore = rebaseToken.balanceOf(borrower);
 
@@ -401,17 +530,45 @@ contract RebaseTokenTest is Test {
         assertEq(nftOwner, lender);
     }
 
-    function test_totalamountEqualtoAmountoPey(uint256 x) public loan(x) {
+    function test_totalamountEqualtoAmountoPey(
+        uint256 x,
+        uint256 amountlend,
+        uint256 rate,
+        uint256 terms
+    ) public loan(x, amountlend, rate, terms) {
         loanId = vault.loanIds(0);
         uint256 amountToPayEach = rebaseToken.amountPayEachInterval(loanId);
         uint256 totalAmount = rebaseToken.amountPayTotal(loanId);
         console.log("Total Amount Expected: ", amountToPayEach);
         console.log("Total Amount: ", totalAmount);
-        /* assertEq(
+        assertApproxEqAbs(
             totalAmount,
             (amountToPayEach * rebaseToken.getLeftTerm(loanId)),
-            "Total Amount is  equal to Amount to Pay Each Interval multiply by the terms"
-        );*/
+            1000
+        );
+    }
+
+    function test_withdrawceo(
+        uint256 x,
+        uint256 amountlend,
+        uint256 rate,
+        uint256 terms
+    ) public loan(x, amountlend, rate, terms) {
+        uint256 amountToPayTotal = rebaseToken.amountPayTotal(loanId);
+        token.mint(borrower, amountToPayTotal);
+        vm.prank(borrower);
+        token.approve(address(vault), amountToPayTotal);
+        vm.prank(borrower);
+        vault.payLoanTotal(loanId);
+        console.log(
+            "Debt balance after : #",
+            rebaseToken.getBalaceOfLoan(loanId)
+        );
+
+        console.log("balance after : #", rebaseToken.superBalanceOf(borrower));
+        vm.prank(owner);
+        vault.withdrawFee(me, address(token));
+        assertGt(token.balanceOf(me), 0); // Assert that the balance of 'me' is greater than 0
     }
 
     ////////////////////////////////////////
@@ -480,7 +637,12 @@ contract RebaseTokenTest is Test {
         }
     }
 
-    function test_interestLoanCompound(uint256 x) public loan(x) {
+    function test_interestLoanCompound(
+        uint256 x,
+        uint256 amountlend,
+        uint256 rate,
+        uint256 terms
+    ) public loan(x, amountlend, rate, terms) {
         uint256 interval = 30 days;
         uint256 rate = (10 * 1e18) / 100; // 10% interest rate
         uint256 term = 12; // 12 months

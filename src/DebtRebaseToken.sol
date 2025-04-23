@@ -81,7 +81,8 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
     }
     // The precision factor is used to handle decimal calculations
     uint256 private constant PRECISION_FACTOR = 1e18;
-    uint256 private constant POINTS_SCORE_PENALTY = 10;
+    uint256 private constant POINTS_SCORE_COMPLETE = 10;
+    uint256 private constant POINTS_SCORE_INTERVAL = 2;
     uint256 private s_penaltyRate = 2 * 1e15; // 0.2% penalty rate
     uint256 private s_daysGracePeriod = 3 days; // 3 days grace period
     mapping(uint256 loanId => loanData) loanInfo;
@@ -110,26 +111,30 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
     constructor() ERC20("NFTBANK", "DEBT") Ownable(msg.sender) {}
 
     /**
+     * @dev setpanaltyrate and setdaygrace we will let this two function in stand by just for while
+     * cause we don't want to compromise the decentralization
+     */
+    /**
      *
      * @param _newPenaltyRate the new penalty rate to be set
      * @notice This function allows the owner to set a new penalty rate for the loans.
      * The penalty rate is set as a percentage of the loan amount.
      * The penalty rate is multiplied by the PRECISION_FACTOR to handle decimal calculations.
      */
-    function setPenaltyRate(uint256 _newPenaltyRate) external onlyOwner {
+    /*function setPenaltyRate(uint256 _newPenaltyRate) external onlyOwner {
         s_penaltyRate = ((_newPenaltyRate * PRECISION_FACTOR) / 100);
-    }
+    }  */
 
     /**
      * @param _newDaysGracePeriod the new grace period in days to be set
      * @notice This function allows the owner to set a new grace period for the loans.
      * The grace period is set in days and is used to determine the time allowed for payments.
      */
-    function setdaysGracePeriod(
+    /*function setdaysGracePeriod(
         uint256 _newDaysGracePeriod
     ) external onlyOwner {
         s_daysGracePeriod = _newDaysGracePeriod;
-    }
+    }*/
 
     /**
      * @param borrower the address of the borrower
@@ -140,7 +145,7 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
     function setBorrowerData(address borrower) internal onlyOwner {
         if (borrowerInfo[borrower].addressBorrower == address(0)) {
             borrowerInfo[borrower].addressBorrower = borrower;
-            borrowerInfo[borrower].score = 100;
+            borrowerInfo[borrower].score = 0;
         }
     }
 
@@ -213,17 +218,31 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
         uint256 loanId,
         uint256 amountToPay
     ) external onlyOwner loanExists(loanId) {
+        /**
+         * @dev Being carefull, the following line wants to avoid the overflow
+         * having into account that only the owner (VAULT contract) has acces to this function
+         * and that the amount to pay is always either the total amount or the amount to pay each interval
+         */
+        if (amountToPay > loanInfo[loanId].loanBalance) {
+            amountToPay = loanInfo[loanId].loanBalance;
+        }
         address borrower = loanInfo[loanId].borrower;
         loanInfo[loanId].loanBalance -= amountToPay;
         loanInfo[loanId].leftTerms--;
         loanInfo[loanId].lastUpdateTime = block.timestamp;
         loanInfo[loanId].lastPayTime = block.timestamp;
         borrowerInfo[borrower].totalPaidAmount += amountToPay;
+        borrowerInfo[loanInfo[loanId].borrower].score = POINTS_SCORE_INTERVAL;
         _burn(borrower, amountToPay);
         if (
             loanInfo[loanId].leftTerms == 0 || loanInfo[loanId].loanBalance == 0
         ) {
             delete loanInfo[loanId];
+            if (loanInfo[loanId].loanBalance > 0) {
+                _burn(borrower, loanInfo[loanId].loanBalance);
+            }
+            borrowerInfo[loanInfo[loanId].borrower]
+                .score = POINTS_SCORE_COMPLETE;
             emit CompletePaid(loanId, borrower, amountToPay);
         }
     }
@@ -301,8 +320,7 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
             loanInfo[loanId].penaltyAmount += penalty;
             borrowerInfo[loanInfo[loanId].borrower]
                 .totalPenaltyAmount += penalty;
-            borrowerInfo[loanInfo[loanId].borrower]
-                .score -= POINTS_SCORE_PENALTY;
+            borrowerInfo[loanInfo[loanId].borrower].score = 0;
             loanInfo[loanId].loanBalance = checkedBalance;
             loanInfo[loanId].lastUpdateTime = block.timestamp;
             _mint(loanInfo[loanId].borrower, penalty);
@@ -350,15 +368,12 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
         uint256 loanId
     ) external view loanExists(loanId) returns (uint256) {
         loanData memory loan = loanInfo[loanId];
-        uint256 loanAmount = balanceOfLoan(loanId);
         uint256 penalty = loan.penaltyAmount;
         InterestType typeInterest = loan.typeInterest;
         uint256 terms = loan.term;
 
         if (typeInterest == InterestType.Simple) {
-            uint256 total = loanAmount +
-                totalloanPlusInterest(loanId) +
-                penalty;
+            uint256 total = totalloanPlusInterest(loanId) + penalty;
             // Simple interest
             return total / terms;
         } else if (typeInterest == InterestType.Compound) {
@@ -604,10 +619,6 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
 
     function getPrecisionFactor() external pure returns (uint256) {
         return PRECISION_FACTOR;
-    }
-
-    function getPointsScorePenalty() external pure returns (uint256) {
-        return POINTS_SCORE_PENALTY;
     }
 
     function getBalaceOfLoan(uint256 loanId) external view returns (uint256) {

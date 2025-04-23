@@ -30,6 +30,8 @@ contract Vault is IERC721Receiver {
     error Vault__loanOfferNotFound(uint256 offerId);
     error Vault__NotOwnerOfLoan(address borrower);
     error Vault__FaildSendToken(address token);
+    error Vault__NotCeo();
+    error Vault__BalanceTokenCero();
 
     // Struct to hold loan details
     struct RequestLoan {
@@ -75,6 +77,7 @@ contract Vault is IERC721Receiver {
     mapping(uint256 offerId => LoanOffer) public loanOffers;
     /// Mapping to store approved loans
     mapping(uint256 loanId => Loan) public approvedLoans;
+    mapping(address token => uint256 balance) public feed_balances;
 
     // Array to store loan IDs
     // Array to store offer IDs
@@ -82,6 +85,7 @@ contract Vault is IERC721Receiver {
     uint256[] public loanIds;
     uint256[] public offerIds;
     uint256[] public approvedLoanIds;
+    address private s_ceo;
 
     //---- Modifiers ----//
     modifier checkNft(
@@ -140,6 +144,7 @@ contract Vault is IERC721Receiver {
 
     constructor(IRebaseToken _rebaseToken) {
         i_rebaseToken = _rebaseToken;
+        s_ceo = msg.sender;
     }
 
     /**
@@ -227,7 +232,7 @@ contract Vault is IERC721Receiver {
         loanRequestExists(loanId)
         checkDataInput(typeInterest, interval)
     {
-        if (rate == 0) {
+        if (rate == 0 || rate > 100) {
             revert Vault__RateNotValid(rate);
         }
         if (term == 0) {
@@ -378,6 +383,7 @@ contract Vault is IERC721Receiver {
 
             uint256 protocolFee = ((interestPerInterval + penaltyAmount) * 3) /
                 100;
+            feed_balances[approvedLoans[loanId].token] += protocolFee;
             i_rebaseToken.burn(loanId, amountPay - interestPerInterval);
             if (
                 IERC20(approvedLoans[loanId].token).transfer(
@@ -424,6 +430,7 @@ contract Vault is IERC721Receiver {
             }
             uint256 protocolFee = ((amountPayPlusInterest - amountNoInterest) *
                 3) / 100;
+            feed_balances[approvedLoans[loanId].token] += protocolFee;
             i_rebaseToken.burn(loanId, amountNoInterest);
             if (
                 IERC20(approvedLoans[loanId].token).transfer(
@@ -479,5 +486,17 @@ contract Vault is IERC721Receiver {
         bytes calldata data
     ) external pure override returns (bytes4) {
         return IERC721Receiver.onERC721Received.selector;
+    }
+
+    function withdrawFee(address who, address token) external {
+        if (msg.sender != s_ceo) {
+            revert Vault__NotCeo();
+        }
+        if (feed_balances[token] == 0) {
+            revert Vault__BalanceTokenCero();
+        }
+        if (IERC20(token).transfer(who, feed_balances[token]) == false) {
+            revert Vault__FaildSendToken(token);
+        }
     }
 }
