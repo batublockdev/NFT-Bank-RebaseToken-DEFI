@@ -45,3 +45,11 @@ test/
   ├── RebaseToken.t.sol
 
 
+## 🚀 Deployment
+
+To deploy using Foundry:
+
+```bash
+forge script script/Deploy.s.sol --broadcast --rpc-url <RPC_URL>
+
+
