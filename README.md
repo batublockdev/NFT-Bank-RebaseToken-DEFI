@@ -1,51 +1,35 @@
-# NFT Vault Loan Protocol
+# 🏦 NFT-Backed Loan Protocol with Rebase Interest
 
-This project is a smart contract system built in Solidity using Foundry. It allows users to obtain loans by using NFTs as collateral. Lenders can provide capital to earn interest over time, which is managed using a Rebase token model.
+This project is a decentralized finance (DeFi) protocol that allows borrowers to use NFTs as collateral to access loans, with interest managed through a dynamic rebase token system. Built entirely in Solidity using the Foundry development framework.
 
-## 🚀 Features
+## 🌐 Overview
 
-- Borrow against NFTs as collateral
-- Fixed interest rate and loan term
-- Rebase token interest accrual
-- Payment interval tracking
-- Secure loan liquidations for overdue payments
-
-## 🛠️ Built With
-
-- [Solidity](https://soliditylang.org/)
-- [Foundry](https://book.getfoundry.sh/) for development and testing
-- [OpenZeppelin](https://docs.openzeppelin.com/) for standard contracts and utilities
+The protocol connects **borrowers** who want to unlock liquidity from their NFTs with **lenders** looking to earn interest. Interest is automatically accrued using a `RebaseToken`, which reflects growing debt over time via elastic supply mechanics.
 
 ## 📦 Contracts
 
-### Vault.sol
+### 🔹 Vault.sol
 
-Main contract managing:
-- NFT deposits
-- Loan offers and acceptance
-- Loan term tracking
-- Interest payments using Rebase tokens
-- Liquidations
+The core contract that:
+- Manages NFT collateral deposits and custody
+- Facilitates loan creation, terms, and agreements
+- Tracks and enforces payment intervals and deadlines
+- Interfaces with `RebaseToken` for debt tracking
+- Handles repayment and loan liquidation logic
 
-## 🧠 How It Works
+### 🔹 RebaseToken.sol
 
-1. **Borrowers** deposit an NFT into the Vault.
-2. **Lenders** offer loan terms: amount, duration, interest rate.
-3. **Borrowers** accept offers.
-4. Loan accrues interest via Rebase token mechanism.
-5. If loan is repaid on time, NFT is returned.
-6. If not repaid, NFT is liquidated to the lender.
+An ERC20-compatible token with a rebasing supply:
+- Represents dynamic debt growth
+- Automatically increases borrower balances over time
+- Triggers can be called periodically to simulate compounding interest
+- Designed to be precise and gas-efficient
 
-## 🔐 Security Considerations
+## 🔁 Workflow
 
-- Only whitelisted NFT collections can be used as collateral.
-- Interest is calculated and tracked on a per-loan basis.
-- Uses non-reentrancy guards and access controls where appropriate.
+1. **Borrower** deposits NFT and requests a loan.
+2. **Lender** submits an offer with loan amount, interest rate, term, and payment frequency.
+3. **Borrower** accepts an offer. Vault locks NFT and issues funds.
+4. Debt is represented via `RebaseToken`,
 
-## 🧪 Testing
-
-Run tests using Foundry:
-
-```bash
-forge test
 
