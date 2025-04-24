@@ -235,7 +235,7 @@ contract Vault is IERC721Receiver {
         if (rate == 0 || rate > 100) {
             revert Vault__RateNotValid(rate);
         }
-        if (term == 0) {
+        if (term == 0 || term > 24) {
             revert Vault__TermNotValid(term);
         }
         if (amount == 0) {
@@ -498,5 +498,9 @@ contract Vault is IERC721Receiver {
         if (IERC20(token).transfer(who, feed_balances[token]) == false) {
             revert Vault__FaildSendToken(token);
         }
+    }
+
+    function ceo() external view returns (address) {
+        return s_ceo;
     }
 }

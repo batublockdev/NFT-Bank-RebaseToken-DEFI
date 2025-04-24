@@ -136,19 +136,9 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
         s_daysGracePeriod = _newDaysGracePeriod;
     }*/
 
-    /**
-     * @param borrower the address of the borrower
-     * @notice This function allows the owner to set the borrower data.
-     * It initializes the borrower's data if it does not already exist.
-     * The borrower's score is set to 100.
-     */
-    function setBorrowerData(address borrower) internal onlyOwner {
-        if (borrowerInfo[borrower].addressBorrower == address(0)) {
-            borrowerInfo[borrower].addressBorrower = borrower;
-            borrowerInfo[borrower].score = 0;
-        }
-    }
-
+    ////////////////////////////////////////
+    /////////  EXTERNALS FUNCTIONS /////////
+    ///////////////////////////////////////
     /**
      * @param loanId the ID of the loan
      * @param rate the interest rate of the loan
@@ -237,12 +227,12 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
         if (
             loanInfo[loanId].leftTerms == 0 || loanInfo[loanId].loanBalance == 0
         ) {
-            delete loanInfo[loanId];
             if (loanInfo[loanId].loanBalance > 0) {
                 _burn(borrower, loanInfo[loanId].loanBalance);
             }
             borrowerInfo[loanInfo[loanId].borrower]
                 .score = POINTS_SCORE_COMPLETE;
+            delete loanInfo[loanId];
             emit CompletePaid(loanId, borrower, amountToPay);
         }
     }
@@ -269,64 +259,6 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
             } else {
                 return uint256(LoanState.Ok);
             }
-        }
-    }
-
-    /**
-     * @param loanId the ID of the loan
-     * @notice This function cleans the loan data and burns the tokens.
-     * It is called when the loan is liquidated.
-     * The function emits a liquidation event.
-     */
-    function CleanLoan(uint256 loanId) internal {
-        uint256 amount = loanInfo[loanId].loanBalance;
-        _burn(loanInfo[loanId].borrower, amount);
-        delete loanInfo[loanId];
-        emit liquidate(loanId, loanInfo[loanId].borrower, amount);
-    }
-
-    /**
-     * @param loanId the ID of the loan
-     * @notice This function checks if the loan has missed payments.
-     * It checks the time since the last payment and compares it to the interval and grace period.
-     * If the time since the last payment is greater than the interval plus the grace period,
-     * it checks if the loan has missed more than two payments.
-     * If the loan has missed more than two payments, it returns true.
-     * Otherwise, it returns false.
-     */
-    function checkLoanMisses(uint256 loanId) internal view returns (bool) {
-        loanData memory loan = loanInfo[loanId];
-        uint256 timeNoPayment = block.timestamp - loan.lastPayTime;
-        uint256 interval = loan.interval;
-        uint256 timePenalty = interval + s_daysGracePeriod;
-        if (timeNoPayment > timePenalty) {
-            if ((timeNoPayment - timePenalty) > (timePenalty * 2)) {
-                return true;
-            } else {
-                return false;
-            }
-        }
-    }
-
-    /**
-     * @param loanId the ID of the loan
-     * @notice This function checks if the loan has penalties.
-     */
-    function checkLoanPenalty(uint256 loanId) internal returns (bool) {
-        uint256 checkedBalance = balanceOfLoan(loanId);
-        uint256 uncheckedBalance = loanInfo[loanId].loanBalance;
-        if (checkedBalance > uncheckedBalance) {
-            uint256 penalty = (checkedBalance - uncheckedBalance);
-            loanInfo[loanId].penaltyAmount += penalty;
-            borrowerInfo[loanInfo[loanId].borrower]
-                .totalPenaltyAmount += penalty;
-            borrowerInfo[loanInfo[loanId].borrower].score = 0;
-            loanInfo[loanId].loanBalance = checkedBalance;
-            loanInfo[loanId].lastUpdateTime = block.timestamp;
-            _mint(loanInfo[loanId].borrower, penalty);
-            return true;
-        } else {
-            return false;
         }
     }
 
@@ -385,6 +317,160 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
     }
 
     /**
+     * @param loanId the id to be chech
+     * @notice the following function return the interest to pay in a loan
+     */
+    function getTotalInterest(
+        uint256 loanId
+    ) external view loanExists(loanId) returns (uint256) {
+        loanData memory loan = loanInfo[loanId];
+
+        uint256 amount = loan.amount;
+        uint256 rate = loan.rate;
+        InterestType typeInterest = loan.typeInterest;
+        uint256 term = loan.term;
+        uint256 interval = loan.interval;
+
+        if (typeInterest == InterestType.Simple) {
+            // Simple interest
+            return interestLoanSimple(interval, rate, term, amount);
+        } else if (typeInterest == InterestType.Compound) {
+            // Compound interest
+            return (interestLoanCompound(interval, rate, term, amount) -
+                amount);
+        }
+    }
+
+    // --- Getters ---------
+    function getLoanInfo(
+        uint256 loanId
+    ) external view returns (loanData memory) {
+        return loanInfo[loanId];
+    }
+
+    function getBorrowerInfo(
+        address borrower
+    ) external view returns (borrowerData memory) {
+        return borrowerInfo[borrower];
+    }
+
+    function getLeftTerm(uint256 loanId) external view returns (uint256) {
+        return loanInfo[loanId].leftTerms;
+    }
+
+    function getTerms(uint256 loanId) external view returns (uint256) {
+        return loanInfo[loanId].term;
+    }
+
+    function getBalanceLoanMinted(
+        uint256 loanId
+    ) external view returns (uint256) {
+        return loanInfo[loanId].loanBalance;
+    }
+
+    function getTotalPenaltyLoan(
+        uint256 loanId
+    ) external view returns (uint256) {
+        return loanInfo[loanId].penaltyAmount;
+    }
+
+    function gettotalloanPlusInterest(
+        uint256 loanId
+    ) external view returns (uint256) {
+        return totalloanPlusInterest(loanId);
+    }
+
+    function getPenaltyRate() external view returns (uint256) {
+        return s_penaltyRate;
+    }
+
+    function getDaysGracePeriod() external view returns (uint256) {
+        return s_daysGracePeriod;
+    }
+
+    function getPrecisionFactor() external pure returns (uint256) {
+        return PRECISION_FACTOR;
+    }
+
+    function getBalaceOfLoan(uint256 loanId) external view returns (uint256) {
+        return balanceOfLoan(loanId);
+    }
+
+    ////////////////////////////////////////
+    /////////  PUBLIC   FUNCTIONS /////////
+    ///////////////////////////////////////
+
+    function superBalanceOf(address borrower) public view returns (uint256) {
+        return super.balanceOf(borrower);
+    }
+
+    /**
+     * @param borrower the address of the borrower
+     * @notice This function calculates the total balance of the borrower.
+     */
+    function balanceOf(
+        address borrower
+    ) public view virtual override returns (uint256) {
+        uint256 totalDebtLoanAmount;
+        uint256 numberOfLoans = borrowerInfo[borrower].loanIds.length;
+        for (uint256 i = 0; i < numberOfLoans; i++) {
+            uint256 loanId = borrowerInfo[borrower].loanIds[i];
+            totalDebtLoanAmount += balanceOfLoan(loanId);
+        }
+        return (totalDebtLoanAmount);
+    }
+
+    /**
+     * @dev transfer function is not allowed in this contract.
+     */
+    function transfer(
+        address to,
+        uint256 amount
+    ) public virtual override returns (bool) {
+        revert DebtRebaseToken__TranferNotAllowed();
+        return true;
+    }
+
+    function transferFrom(
+        address from,
+        address to,
+        uint256 amount
+    ) public virtual override returns (bool) {
+        revert DebtRebaseToken__TranferNotAllowed();
+        return true;
+    }
+
+    ////////////////////////////////////////
+    /////////  INTERNALS  FUNCTIONS ////////
+    ///////////////////////////////////////
+    /**
+     * @param loanId the ID of the loan
+     * @notice This function calculates the total amount of the loan plus interest.
+     * It takes into account the loan amount, interest rate, type of interest,
+     * and the remaining terms.
+     * The function returns the total amount of the loan plus interest.
+     */
+    function totalloanPlusInterest(
+        uint256 loanId
+    ) internal view loanExists(loanId) returns (uint256) {
+        loanData memory loan = loanInfo[loanId];
+
+        uint256 amount = loan.amount;
+        uint256 rate = loan.rate;
+        InterestType typeInterest = loan.typeInterest;
+        uint256 term = loan.term;
+        uint256 interval = loan.interval;
+
+        if (typeInterest == InterestType.Simple) {
+            // Simple interest
+            return amount + interestLoanSimple(interval, rate, term, amount);
+        } else if (typeInterest == InterestType.Compound) {
+            // Compound interest
+            return interestLoanCompound(interval, rate, term, amount);
+        }
+    }
+
+    /**
      * @param loanId the ID of the loan
      * @notice This function calculates the balance of the loan.
      * It takes into account the time since the last payment, the interval,
@@ -410,54 +496,6 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
             return (amount * ecu) / PRECISION_FACTOR;
         } else {
             return (loan.loanBalance);
-        }
-    }
-
-    /**
-     * @param loanId the ID of the loan
-     * @notice This function calculates the total amount of the loan plus interest.
-     * It takes into account the loan amount, interest rate, type of interest,
-     * and the remaining terms.
-     * The function returns the total amount of the loan plus interest.
-     */
-    function totalloanPlusInterest(
-        uint256 loanId
-    ) public view loanExists(loanId) returns (uint256) {
-        loanData memory loan = loanInfo[loanId];
-
-        uint256 amount = loan.amount;
-        uint256 rate = loan.rate;
-        InterestType typeInterest = loan.typeInterest;
-        uint256 term = loan.term;
-        uint256 interval = loan.interval;
-
-        if (typeInterest == InterestType.Simple) {
-            // Simple interest
-            return amount + interestLoanSimple(interval, rate, term, amount);
-        } else if (typeInterest == InterestType.Compound) {
-            // Compound interest
-            return interestLoanCompound(interval, rate, term, amount);
-        }
-    }
-
-    function getTotalInterest(
-        uint256 loanId
-    ) external view loanExists(loanId) returns (uint256) {
-        loanData memory loan = loanInfo[loanId];
-
-        uint256 amount = loan.amount;
-        uint256 rate = loan.rate;
-        InterestType typeInterest = loan.typeInterest;
-        uint256 term = loan.term;
-        uint256 interval = loan.interval;
-
-        if (typeInterest == InterestType.Simple) {
-            // Simple interest
-            return interestLoanSimple(interval, rate, term, amount);
-        } else if (typeInterest == InterestType.Compound) {
-            // Compound interest
-            return (interestLoanCompound(interval, rate, term, amount) -
-                amount);
         }
     }
 
@@ -530,98 +568,78 @@ contract DebtRebaseToken is ERC20, Ownable, AccessControl {
         }
     }
 
-    function superBalanceOf(address borrower) public view returns (uint256) {
-        return super.balanceOf(borrower);
-    }
-
     /**
      * @param borrower the address of the borrower
-     * @notice This function calculates the total balance of the borrower.
+     * @notice This function allows the owner to set the borrower data.
+     * It initializes the borrower's data if it does not already exist.
+     * The borrower's score is set to 100.
      */
-    function balanceOf(
-        address borrower
-    ) public view virtual override returns (uint256) {
-        uint256 totalDebtLoanAmount;
-        uint256 numberOfLoans = borrowerInfo[borrower].loanIds.length;
-        for (uint256 i = 0; i < numberOfLoans; i++) {
-            uint256 loanId = borrowerInfo[borrower].loanIds[i];
-            totalDebtLoanAmount += balanceOfLoan(loanId);
+    function setBorrowerData(address borrower) internal onlyOwner {
+        if (borrowerInfo[borrower].addressBorrower == address(0)) {
+            borrowerInfo[borrower].addressBorrower = borrower;
+            borrowerInfo[borrower].score = 0;
         }
-        return (totalDebtLoanAmount);
+    }
+
+    ////////////////////////////////////////
+    /////////  PRIVATE  FUNCTIONS ////////
+    ///////////////////////////////////////
+
+    /**
+     * @param loanId the ID of the loan
+     * @notice This function cleans the loan data and burns the tokens.
+     * It is called when the loan is liquidated.
+     * The function emits a liquidation event.
+     */
+    function CleanLoan(uint256 loanId) private {
+        uint256 amount = loanInfo[loanId].loanBalance;
+        _burn(loanInfo[loanId].borrower, amount);
+        delete loanInfo[loanId];
+        emit liquidate(loanId, loanInfo[loanId].borrower, amount);
     }
 
     /**
-     * @dev transfer function is not allowed in this contract.
+     * @param loanId the ID of the loan
+     * @notice This function checks if the loan has missed payments.
+     * It checks the time since the last payment and compares it to the interval and grace period.
+     * If the time since the last payment is greater than the interval plus the grace period,
+     * it checks if the loan has missed more than two payments.
+     * If the loan has missed more than two payments, it returns true.
+     * Otherwise, it returns false.
      */
-    function transfer(
-        address to,
-        uint256 amount
-    ) public virtual override returns (bool) {
-        revert DebtRebaseToken__TranferNotAllowed();
-        return true;
+    function checkLoanMisses(uint256 loanId) private view returns (bool) {
+        loanData memory loan = loanInfo[loanId];
+        uint256 timeNoPayment = block.timestamp - loan.lastPayTime;
+        uint256 interval = loan.interval;
+        uint256 timePenalty = interval + s_daysGracePeriod;
+        if (timeNoPayment > timePenalty) {
+            if ((timeNoPayment - timePenalty) > (timePenalty * 2)) {
+                return true;
+            } else {
+                return false;
+            }
+        }
     }
 
-    function transferFrom(
-        address from,
-        address to,
-        uint256 amount
-    ) public virtual override returns (bool) {
-        revert DebtRebaseToken__TranferNotAllowed();
-        return true;
-    }
-
-    // --- Getters ---------
-    function getLoanInfo(
-        uint256 loanId
-    ) external view returns (loanData memory) {
-        return loanInfo[loanId];
-    }
-
-    function getBorrowerInfo(
-        address borrower
-    ) external view returns (borrowerData memory) {
-        return borrowerInfo[borrower];
-    }
-
-    function getLeftTerm(uint256 loanId) external view returns (uint256) {
-        return loanInfo[loanId].leftTerms;
-    }
-
-    function getTerms(uint256 loanId) external view returns (uint256) {
-        return loanInfo[loanId].term;
-    }
-
-    function getBalanceLoanMinted(
-        uint256 loanId
-    ) external view returns (uint256) {
-        return loanInfo[loanId].loanBalance;
-    }
-
-    function getTotalPenaltyLoan(
-        uint256 loanId
-    ) external view returns (uint256) {
-        return loanInfo[loanId].penaltyAmount;
-    }
-
-    function gettotalloanPlusInterest(
-        uint256 loanId
-    ) external view returns (uint256) {
-        return totalloanPlusInterest(loanId);
-    }
-
-    function getPenaltyRate() external view returns (uint256) {
-        return s_penaltyRate;
-    }
-
-    function getDaysGracePeriod() external view returns (uint256) {
-        return s_daysGracePeriod;
-    }
-
-    function getPrecisionFactor() external pure returns (uint256) {
-        return PRECISION_FACTOR;
-    }
-
-    function getBalaceOfLoan(uint256 loanId) external view returns (uint256) {
-        return balanceOfLoan(loanId);
+    /**
+     * @param loanId the ID of the loan
+     * @notice This function checks if the loan has penalties.
+     */
+    function checkLoanPenalty(uint256 loanId) private returns (bool) {
+        uint256 checkedBalance = balanceOfLoan(loanId);
+        uint256 uncheckedBalance = loanInfo[loanId].loanBalance;
+        if (checkedBalance > uncheckedBalance) {
+            uint256 penalty = (checkedBalance - uncheckedBalance);
+            loanInfo[loanId].penaltyAmount += penalty;
+            borrowerInfo[loanInfo[loanId].borrower]
+                .totalPenaltyAmount += penalty;
+            borrowerInfo[loanInfo[loanId].borrower].score = 0;
+            loanInfo[loanId].loanBalance = checkedBalance;
+            loanInfo[loanId].lastUpdateTime = block.timestamp;
+            _mint(loanInfo[loanId].borrower, penalty);
+            return true;
+        } else {
+            return false;
+        }
     }
 }
