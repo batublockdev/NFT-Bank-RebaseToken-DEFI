@@ -1,66 +1,51 @@
-## Foundry
+# NFT Vault Loan Protocol
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+This project is a smart contract system built in Solidity using Foundry. It allows users to obtain loans by using NFTs as collateral. Lenders can provide capital to earn interest over time, which is managed using a Rebase token model.
 
-Foundry consists of:
+## 🚀 Features
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+- Borrow against NFTs as collateral
+- Fixed interest rate and loan term
+- Rebase token interest accrual
+- Payment interval tracking
+- Secure loan liquidations for overdue payments
 
-## Documentation
+## 🛠️ Built With
 
-https://book.getfoundry.sh/
+- [Solidity](https://soliditylang.org/)
+- [Foundry](https://book.getfoundry.sh/) for development and testing
+- [OpenZeppelin](https://docs.openzeppelin.com/) for standard contracts and utilities
 
-## Usage
+## 📦 Contracts
 
-### Build
+### Vault.sol
 
-```shell
-$ forge build
-```
+Main contract managing:
+- NFT deposits
+- Loan offers and acceptance
+- Loan term tracking
+- Interest payments using Rebase tokens
+- Liquidations
 
-### Test
+## 🧠 How It Works
 
-```shell
-$ forge test
-```
+1. **Borrowers** deposit an NFT into the Vault.
+2. **Lenders** offer loan terms: amount, duration, interest rate.
+3. **Borrowers** accept offers.
+4. Loan accrues interest via Rebase token mechanism.
+5. If loan is repaid on time, NFT is returned.
+6. If not repaid, NFT is liquidated to the lender.
 
-### Format
+## 🔐 Security Considerations
 
-```shell
-$ forge fmt
-```
+- Only whitelisted NFT collections can be used as collateral.
+- Interest is calculated and tracked on a per-loan basis.
+- Uses non-reentrancy guards and access controls where appropriate.
 
-### Gas Snapshots
+## 🧪 Testing
 
-```shell
-$ forge snapshot
-```
+Run tests using Foundry:
 
-### Anvil
+```bash
+forge test
 
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
