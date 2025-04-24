@@ -32,4 +32,16 @@ An ERC20-compatible token with a rebasing supply:
 3. **Borrower** accepts an offer. Vault locks NFT and issues funds.
 4. Debt is represented via `RebaseToken`,
 
+## 📁 Directory Structure
+contracts/
+  ├── Vault.sol         # Loan management
+  ├── RebaseToken.sol   # Interest accrual logic
+
+script/
+  ├── Deploy.s.sol      # Deployment scripts
+
+test/
+  ├── Vault.t.sol
+  ├── RebaseToken.t.sol
+
 
